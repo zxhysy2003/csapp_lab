@@ -61,7 +61,7 @@ team_t team = {
 
 /* read and write the pointer position of p */
 #define GET(p) (*(unsigned int *)(p))
-#define PUT(p,val) ((*(unsigned int *)(p)) = (val))
+#define PUT(p,val) (*(unsigned int *)(p) = (unsigned int)(val))
 
 /* get size and allocated bit from header and footer */
 #define GET_SIZE(p) (GET(p) & ~0x7)
@@ -91,6 +91,10 @@ static void *find_fit(size_t size); //first fit
 static void place(void *bp,size_t size); //split free block
 static void delete_from_free_list(void *bp);
 static void coalesce(void *bp);
+static void *case1(void *bp);
+static void *case2(void *bp);
+static void *case3(void *bp);
+static void *case4(void *bp);
 
 /* 
  * mm_init - initialize the malloc package.
@@ -193,12 +197,12 @@ void *mm_malloc(size_t size)
     else
     {
         // if not find fit block then allocate from heap
-        if((bp == allocate_from_heap(asize)) == NULL) {
+        if((bp = allocate_from_heap(asize)) == NULL) {
             return NULL;
         }
         place(bp,asize);
     }
-
+    return bp;
 }
 static void *find_fit(size_t size)
 {
@@ -287,6 +291,136 @@ static void coalesce(void *bp)
     char *mem_max_addr = (char *)mem_heap_hi() + 1;
     size_t prev_alloc = GET_ALLOC(HDRP(prev_blockp));
     size_t next_alloc;
+    
+    if(next_blockp >= mem_max_addr) {
+        if(!prev_alloc)
+        {
+            case3(bp);
+        }
+        else
+        {
+            case1(bp);
+        }
+    }
+    else {
+        next_alloc = GET_ALLOC(HDRP(next_blockp));
+        if(prev_alloc && next_alloc)
+        {
+            case1(bp);
+        }
+        else if(!prev_alloc && next_alloc)
+        {
+            case3(bp);
+        }
+        else if(prev_alloc && !next_alloc)
+        {
+            case2(bp);
+        }
+        else
+        {
+            case4(bp);
+        }
+    }
+
+}
+// prev_alloc && next_alloc
+static void *case1(void *bp)
+{
+    insert_to_free_list(bp);
+    return bp;
+}
+// prev_alloc && !next_alloc
+static void *case2(void *bp)
+{
+    void *next_blockp = NEXT_BLKP(bp);
+    void *prev_free_blockp;
+    void *next_free_blockp;
+    size_t size = GET_SIZE(HDRP(bp)) + GET_SIZE(HDRP(next_blockp));
+
+    PUT(HDRP(bp),PACK(size,0));
+    PUT(FTRP(next_blockp),PACK(size,0));
+
+    prev_free_blockp = PREV_FREE_BLKP(next_blockp);
+    next_free_blockp = NEXT_FREE_BLKP(next_blockp);
+
+    // bound check
+    if(next_free_blockp == NULL) {
+        PUT(NEXT_PTR(prev_free_blockp),NULL);
+    } else {
+        PUT(NEXT_PTR(prev_free_blockp),next_free_blockp);
+        PUT(PREV_PTR(next_free_blockp),prev_free_blockp);
+    }
+
+    insert_to_free_list(bp);
+    return bp;
+}
+// !prev_alloc && next_alloc
+static void *case3(void *bp)
+{
+    char *prev_blockp = PREV_BLKP(bp);
+    char *prev_free_blockp;
+    char *next_free_blockp;
+    size_t size = GET_SIZE(HDRP(bp)) + GET_SIZE(HDRP(prev_blockp));
+
+    PUT(HDRP(prev_blockp),PACK(size,0));
+    PUT(FTRP(bp),PACK(size,0));
+
+    next_free_blockp = NEXT_FREE_BLKP(prev_blockp);
+    prev_free_blockp = PREV_FREE_BLKP(prev_blockp);
+
+    // bound check
+    if(next_free_blockp == NULL) {
+        PUT(NEXT_PTR(prev_free_blockp),NULL);
+    } else {
+        PUT(NEXT_PTR(prev_free_blockp),next_free_blockp);
+        PUT(PREV_PTR(next_free_blockp),prev_free_blockp);
+    }
+
+    insert_to_free_list(prev_blockp);
+    return prev_blockp;
+}
+// !prev_alloc && !next_alloc
+static void *case4(void *bp)
+{
+    void *prev_blockp;
+    void *prev1_free_blockp;
+    void *next1_free_blockp;
+    void *next_blockp;
+    void *prev2_free_blockp;
+    void *next2_free_blockp;
+
+    size_t size;
+    prev_blockp = PREV_BLKP(bp);
+    next_blockp = NEXT_BLKP(bp);
+
+    size_t size1 = GET_SIZE(HDRP(prev_blockp));
+    size_t size2 = GET_SIZE(HDRP(bp));
+    size_t size3 = GET_SIZE(HDRP(next_blockp));
+    size = size1 + size2 + size3;
+    PUT(HDRP(prev_blockp),PACK(size,0));
+    PUT(FTRP(next_blockp),PACK(size,0));
+
+
+    prev1_free_blockp = PREV_FREE_BLKP(prev_blockp);
+    next1_free_blockp = NEXT_FREE_BLKP(prev_blockp);
+    if(next1_free_blockp == NULL) {
+        PUT(NEXT_PTR(prev1_free_blockp),NULL);
+    } else {
+        PUT(NEXT_PTR(prev1_free_blockp),next1_free_blockp);
+        PUT(PREV_PTR(next1_free_blockp),prev1_free_blockp);
+    }
+
+    prev2_free_blockp = PREV_FREE_BLKP(next_blockp);
+    next2_free_blockp = NEXT_FREE_BLKP(next_blockp);
+    if(next2_free_blockp == NULL) {
+        PUT(NEXT_PTR(prev2_free_blockp),NULL);
+    } else {
+        PUT(NEXT_PTR(prev2_free_blockp),next2_free_blockp);
+        PUT(PREV_PTR(next2_free_blockp),prev2_free_blockp);
+    }
+
+    insert_to_free_list(prev_blockp);
+    return prev_blockp;
 
 }
 /*
