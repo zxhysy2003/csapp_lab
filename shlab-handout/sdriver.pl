@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 #!/usr/local/bin/perl
 use Getopt::Std;
 use FileHandle;
