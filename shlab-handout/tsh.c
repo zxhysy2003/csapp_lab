@@ -85,6 +85,55 @@ void app_error(char *msg);
 typedef void handler_t(int);
 handler_t *Signal(int signum, handler_t *handler);
 
+
+/* Error wrapper function */
+pid_t Fork(void);
+void Sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+void Sigemptyset(sigset_t *set);
+void Sigfillset(sigset_t *set);
+void Sigaddset(sigset_t *set, int signum);
+void Execve(const char *filename, char *const argv[], char *const envp[]);
+void Setpgid(pid_t pid, pid_t pgid);
+void Kill(pid_t pid, int sig);
+pid_t Fork(void){
+    pid_t pid;
+    if((pid = fork()) < 0)
+        unix_error("Fork error");
+    return pid;
+}
+void Sigprocmask(int how, const sigset_t *set, sigset_t *oldset){
+    if(sigprocmask(how, set, oldset) < 0)
+        unix_error("Sigprocmask error");
+}
+void Sigemptyset(sigset_t *set){
+    if(sigemptyset(set) < 0)
+        unix_error("Sigprocmask error");
+}
+void Sigfillset(sigset_t *set){
+    if(sigfillset(set) < 0)
+        unix_error("Sigfillset error");
+}
+void Sigaddset(sigset_t *set, int signum){
+    if(sigaddset(set, signum) < 0)
+        unix_error("Sigaddset error");
+}
+void Execve(const char *filename, char *const argv[], char *const envp[]){
+    if(execve(filename, argv, envp) < 0){
+        printf("%s: Command not found.\n", argv[0]);
+    }
+}
+void Setpgid(pid_t pid, pid_t pgid){
+    if(setpgid(pid, pgid) < 0){
+        unix_error("Setpid error");
+    }
+}
+void Kill(pid_t pid, int sig){
+    if(kill(pid, sig) < 0){
+        unix_error("Kill error");
+    }
+}
+
+
 /*
  * main - The shell's main routine 
  */
@@ -165,6 +214,45 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline) 
 {
+    char *argv[MAXARGS]; //store analytic arguments
+    char buf[MAXLINE]; //analyze cmdline
+    int bg; // background or foreground
+    int state;// hint bg or fg
+    pid_t pid;// pid of child process
+
+    strcpy(buf,cmdline);
+    bg = parseline(buf,argv); //analyze argument
+    state = bg ? BG : FG;
+    if(argv[0] == NULL) {
+        return;
+    }
+    sigset_t mask_all,mask_one,prev_one;
+    Sigfillset(&mask_all);
+    Sigemptyset(&mask_one);
+    Sigaddset(&mask_one,SIGCHLD);
+
+    if(!builtin_cmd(argv)) {
+        Sigprocmask(SIG_BLOCK,&mask_one,&prev_one);// block before fork()
+        if((pid = Fork()) == 0) {
+            Sigprocmask(SIG_SETMASK,&prev_one,NULL);// unblock the child process
+            Setpgid(0,0); // create new process group,ID is set as PID
+            Execve(argv[0],argv,environ); // execute
+            exit(0); // must exit after execute
+        }
+        if(state == FG) {
+            Sigprocmask(SIG_BLOCK,&mask_all,NULL); // block all signals before add the job
+            addjob(jobs,pid,state,cmdline); // add to job list
+            Sigprocmask(SIG_SETMASK,&mask_one,NULL);
+            waitfg(pid);
+        }
+        else {
+            Sigprocmask(SIG_BLOCK,&mask_all,NULL); // block all signals before add the job
+            addjob(jobs,pid,state,cmdline);
+            Sigprocmask(SIG_SETMASK,&mask_one,NULL);
+            printf("[%d] (%d) %s",pid2jid(pid),pid,cmdline);
+        }
+        Sigprocmask(SIG_SETMASK,&prev_one,NULL);
+    }
     return;
 }
 
