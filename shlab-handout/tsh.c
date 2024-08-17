@@ -387,6 +387,11 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    sigset_t mask;
+    Sigemptyset(&mask);
+    while(fgpid(jobs) != 0) {
+        sigsuspend(&mask);
+    }
     return;
 }
 
