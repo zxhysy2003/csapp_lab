@@ -371,13 +371,19 @@ void do_bgfg(char **argv)
             return;
         }
     }
-    Kill(-(job->pid),SIGCONT);
-    job->state = state;
     if(state == BG) {
+        Kill(-(job->pid),SIGCONT);
+        job->state = state;
         printf("[%d] (%d) %s",job->jid,job->pid,job->cmdline);
     }
     else {
+        sigset_t mask_one,prev;
+        Sigaddset(&mask_one,SIGCHLD);
+        Sigprocmask(SIG_BLOCK,&mask_one,&prev);
+        Kill(-(job->pid),SIGCONT);
+        job->state = state;
         waitfg(job->pid);
+        Sigprocmask(SIG_SETMASK,&prev,NULL);
     }
     return;
 }
@@ -418,6 +424,16 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+    int olderrno = errno;
+    int pid;
+    sigset_t mask_all,prev;
+    Sigfillset(&mask_all);
+    Sigprocmask(SIG_BLOCK,&mask_all,&prev);
+    if((pid = fgpid(jobs)) != 0) {
+        Sigprocmask(SIG_SETMASK,&prev,NULL);
+        Kill(-pid,SIGINT);
+    }
+    errno = olderrno;
     return;
 }
 
@@ -428,6 +444,16 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+    int olderrno = errno;
+    int pid;
+    sigset_t mask_all,prev;
+    Sigfillset(&mask_all);
+    Sigprocmask(SIG_BLOCK,&mask_all,&prev);
+    if((pid = fgpid(jobs)) != 0) {
+        Sigprocmask(SIG_SETMASK,&prev,NULL);
+        Kill(-pid,SIGSTOP);
+    }
+    errno = olderrno;
     return;
 }
 
