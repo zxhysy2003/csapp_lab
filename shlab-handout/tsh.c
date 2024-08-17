@@ -414,6 +414,27 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+    int olderrno = errno;
+    int status;
+    pid_t pid;
+    struct job_t * job;
+    sigset_t mask,prev;
+    sigfillset(&mask);
+    while((pid = waitpid(-1,&status,WNOHANG | WUNTRACED)) > 0) {
+        Sigprocmask(SIG_BLOCK,&mask,&prev);
+        if(WIFEXITED(status)) {
+            deletejob(jobs,pid);
+        } else if(WIFSIGNALED(status)) {
+            printf("Job [%d] (%d) terminated by signal %d\n",pid2jid(pid),pid,WTERMSIG(status));
+            deletejob(jobs,pid);
+        } else if(WIFSTOPPED(status)) {
+            printf("Job [%d] (%d) stoped by signal %d\n",pid2jid(pid),pid,WSTOPSIG(status));
+            job = getjobpid(jobs,pid);
+            job->state = ST;
+        }
+        Sigprocmask(SIG_SETMASK,&prev,NULL);
+    }
+    errno = olderrno;
     return;
 }
 
