@@ -1,9 +1,14 @@
 #include <stdio.h>
 #include "csapp.h"
+#include "sbuf.h"
 
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
+#define SBUFSIZE 16
+#define NTHREADS 4
+
+sbuf_t sbuf; // connection with buffer
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
@@ -19,6 +24,7 @@ void sigpipe_handler();
 void doit(int connfd);
 void build_header(char *http_header,struct Uri *uri_data,rio_t *client_rio);
 void parse_uri(char *uri,struct Uri *uri_data);
+void *thread(void *vargp);
 
 int main(int argc,char **argv)
 {
@@ -26,6 +32,7 @@ int main(int argc,char **argv)
     socklen_t clientlen;
     char hostname[MAXLINE],port[MAXLINE];
     struct sockaddr_storage clientaddr;
+    pthread_t tid;
 
     if(argc != 2) {
         fprintf(stderr,"usage: %s <port>\n",argv[0]);
@@ -33,20 +40,39 @@ int main(int argc,char **argv)
     }
     signal(SIGPIPE,sigpipe_handler);
     listenfd = Open_listenfd(argv[1]);
+    sbuf_init(&sbuf,SBUFSIZE);
+
+    // create worker thread
+    for(int i = 0;i < NTHREADS;i++) {
+        Pthread_create(&tid,NULL,thread,NULL);
+    }
+
     while(1)
     {
         clientlen = sizeof(clientaddr);
         connfd = Accept(listenfd,(SA *)&clientaddr,&clientlen);
 
+        // add fd to buffer
+        sbuf_insert(&sbuf,connfd);
+
         Getnameinfo((SA *)&clientaddr,clientlen,hostname,MAXLINE,port,MAXLINE,0);
         printf("Accepted connection from (%s %s)\n",hostname,port);
 
-        doit(connfd);
+        //doit(connfd);
 
-        Close(connfd);
+        //Close(connfd);
     }
 
     return 0;
+}
+void *thread(void *vargp)
+{
+    Pthread_detach(Pthread_self());
+    while(1) {
+        int connfd = sbuf_remove(&sbuf);
+        doit(connfd);
+        Close(connfd);
+    }
 }
 
 void sigpipe_handler()
@@ -54,6 +80,7 @@ void sigpipe_handler()
     printf("SIGPIPE DO NOTHING...\n");
     return;
 }
+
 void doit(int connfd)
 {
     char buf[MAXLINE],method[MAXLINE],uri[MAXLINE],version[MAXLINE];
