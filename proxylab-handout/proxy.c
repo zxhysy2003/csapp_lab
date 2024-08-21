@@ -1,15 +1,13 @@
 #include <stdio.h>
 #include "csapp.h"
 #include "sbuf.h"
+#include "cache.h"
 
-/* Recommended max cache and object sizes */
-#define MAX_CACHE_SIZE 1049000
-#define MAX_OBJECT_SIZE 102400
 #define SBUFSIZE 16
 #define NTHREADS 4
 
 sbuf_t sbuf; // connection with buffer
-
+Cache cache;
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
@@ -41,6 +39,7 @@ int main(int argc,char **argv)
     signal(SIGPIPE,sigpipe_handler);
     listenfd = Open_listenfd(argv[1]);
     sbuf_init(&sbuf,SBUFSIZE);
+    init_Cache(&cache);
 
     // create worker thread
     for(int i = 0;i < NTHREADS;i++) {
@@ -88,12 +87,35 @@ void doit(int connfd)
 
     rio_t rio,server_rio;
 
+    char cache_tag[MAXLINE];
     Rio_readinitb(&rio,connfd);
     Rio_readlineb(&rio,buf,MAXLINE);
     sscanf(buf,"%s %s %s",method,uri,version);
+    strcpy(cache_tag,uri);
 
     if(strcasecmp(method,"GET")) {
         printf("Proxy does not implement the method");
+        return;
+    }
+    
+    //whether uri cached,if cached then return
+    int i;
+    if((i = get_Cache(&cache,cache_tag)) != -1) {
+        P(&(cache.data[i].mutex));
+        cache.data[i].read_cnt ++;
+        if(cache.data[i].read_cnt == 1) {
+            P(&(cache.data[i].w));
+        }
+        V(&(cache.data[i].mutex));
+
+        Rio_writen(connfd,cache.data[i].obj,strlen(cache.data[i].obj));
+
+        P(&(cache.data[i].mutex));
+        cache.data[i].read_cnt --;
+        if(cache.data[i].read_cnt == 0) {
+            V(&(cache.data[i].w));
+        }
+        V(&(cache.data[i].mutex));
         return;
     }
 
@@ -112,13 +134,21 @@ void doit(int connfd)
     Rio_writen(serverfd,server,strlen(server));
 
     size_t n;
+    char cache_buf[MAX_OBJECT_SIZE];
+    int size_buf = 0;
     while((n = Rio_readlineb(&server_rio,buf,MAXLINE)) != 0) {
+        size_buf += n;
+        if(size_buf < MAX_OBJECT_SIZE)
+            strcat(cache_buf,buf);
         printf("proxy received %d bytes,then send.\n",(int)n);
         Rio_writen(connfd,buf,n);
     }
 
     Close(serverfd);
 
+    if(size_buf < MAX_OBJECT_SIZE) {
+        write_Cache(&cache,cache_tag,cache_buf);
+    }
 }
 
 void parse_uri(char *uri,struct Uri *uri_data)
